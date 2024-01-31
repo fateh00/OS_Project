@@ -12,9 +12,40 @@ struct {
   struct proc proc[NPROC];
 } ptable;
 
+uint
+random(void)
+{
+  // Take from http://stackoverflow.com/questions/1167253/implementation-of-rand
+  static unsigned int z1 = 12345, z2 = 12345, z3 = 12345, z4 = 12345;
+  unsigned int b;
+  b  = ((z1 << 6) ^ z1) >> 13;
+  z1 = ((z1 & 4294967294U) << 18) ^ b;
+  b  = ((z2 << 2) ^ z2) >> 27; 
+  z2 = ((z2 & 4294967288U) << 2) ^ b;
+  b  = ((z3 << 13) ^ z3) >> 21;
+  z3 = ((z3 & 4294967280U) << 7) ^ b;
+  b  = ((z4 << 3) ^ z4) >> 12;
+  z4 = ((z4 & 4294967168U) << 13) ^ b;
+
+  return (z1 ^ z2 ^ z3 ^ z4) / 2;
+}
+
+int
+randomrange(int lo, int hi)
+{
+  if (hi < lo) {
+    int tmp = lo;
+    lo = hi;
+    hi = tmp;
+  }
+  int range = hi - lo + 1;
+  return random() % (range) + lo;
+}
+
 static struct proc *initproc;
 
 int nextpid = 1;
+int nexttid = 1;
 extern void forkret(void);
 extern void trapret(void);
 
@@ -260,6 +291,14 @@ exit(void)
         wakeup1(initproc);
     }
   }
+  for(struct proc *p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->threadId == curproc->threadId && (p->state == RUNNABLE || p->state == RUNNING || p->state == SLEEPING )){
+        p->threadCount --;
+      }
+    }
+
+    curproc->threadCount = 0;
+    curproc->threadId = -1;
 
   // Jump into the scheduler, never to return.
   curproc->state = ZOMBIE;
@@ -321,6 +360,15 @@ clone(void* stack,void(*fcn)(void*,void*), void *arg1, void *arg2)
   safestrcpy(np->name, p->name, sizeof(p->name));
 
   acquire(&ptable.lock);
+  p->threadCount++;
+    p->threadId = p->threadId < 0 ? nexttid++ : p->threadId;
+    np->threadId = p->threadId;
+
+    for(struct proc *ip = ptable.proc; ip < &ptable.proc[NPROC]; ip++){
+      if(ip->threadId == p->threadId && (ip->state == RUNNABLE || ip->state == RUNNING || ip->state == SLEEPING )){
+        ip->threadCount = p->threadCount;
+      }
+    }
 
   np->state = RUNNABLE;
 
@@ -447,7 +495,11 @@ scheduler(void)
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(p->state != RUNNABLE)
         continue;
-
+      if (p->threadCount > 0){
+        if (randomrange(0, p->threadCount) != 1){
+          continue;
+        }
+      }
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
